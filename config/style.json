@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "settings_status": "provisional_extraction_defaults",
+  "sample_rate": 16000,
+  "device": "cuda",
+  "emotion": {
+    "repo": "emotion2vec/emotion2vec_plus_large",
+    "revision": "6c303ba987b86b93193de93e34bb2b077a6bedc4"
+  },
+  "melo_revision": "209145371cff8fc3bd60d7be902ea69cbdb7965a",
+  "tokenizer_revision": "1779cc0982ada0216dd6de0dd4e86fb78201926d",
+  "vad": {
+    "threshold": 0.5,
+    "min_speech_duration_ms": 250,
+    "min_silence_duration_ms": 100,
+    "speech_pad_ms": 0
+  },
+  "pitch": {
+    "model": "full",
+    "hop_length": 160,
+    "fmin": 50.0,
+    "fmax": 1100.0,
+    "batch_size": 512,
+    "periodicity_threshold": 0.21,
+    "silence_db": -60.0
+  }
+}

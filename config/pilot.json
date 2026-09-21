@@ -1,0 +1,15 @@
+{
+  "whisper_options": {
+    "language": "ko",
+    "task": "transcribe",
+    "verbose": null,
+    "fp16": true,
+    "temperature": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+    "compression_ratio_threshold": 2.4,
+    "logprob_threshold": -1.0,
+    "no_speech_threshold": 0.6,
+    "condition_on_previous_text": true,
+    "initial_prompt": null,
+    "word_timestamps": false
+  }
+}

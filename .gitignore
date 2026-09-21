@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+Voice/
+Announce/
+SD Character/
+outputs/
+dist/
+*.zip
+*.wav
+*.mp3
+*.flac
+*.pt
+*.pth
+*.safetensors
+*.onnx
+.env
+.env.*
+!.env.example

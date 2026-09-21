@@ -1,0 +1,38 @@
+{
+  "stage": "warmup",
+  "melo_revision": "209145371cff8fc3bd60d7be902ea69cbdb7965a",
+  "model_repo": "myshell-ai/MeloTTS-Korean",
+  "model_revision": "0207e5adfc90129a51b6b03d89be6d84360ed323",
+  "model_artifact_sha256": {
+    "config.json": "74543376976dfadde45ba34336fa79c7e95509f43a7c2e701b22c0f71fd7695c",
+    "checkpoint.pth": "48e3ff3fd0b5348e095f0468e60ae727507564100f58142ef3a922ead6e0a4d0"
+  },
+  "frontend_revision": "1779cc0982ada0216dd6de0dd4e86fb78201926d",
+  "add_blank": true,
+  "epochs": 3,
+  "batch_size": 1,
+  "accumulation_steps": 4,
+  "seed": 42,
+  "precision": "fp16",
+  "learning_rate": 0.0001,
+  "predictor_lr": 0.00001,
+  "betas": [0.8, 0.99],
+  "eps": 1e-9,
+  "weight_decay": 0.01,
+  "lr_decay": 0.999875,
+  "gradient_clip": 1.0,
+  "save_every": 100,
+  "eval_every": 100,
+  "melo_source_sha256": {
+    "models.py": "f96eef52845224b5797e54008013a5b6a5fafad2035713dc5181a5db8bf8bef4",
+    "modules.py": "de80baee7dc8d89d621c541b899a84193df4bb3ef95f5e6d076cc37b6bb10bf6",
+    "attentions.py": "5261b73e4945651e9f7133375f4f83c1532a30f8227f6249c7006d696a737353",
+    "commons.py": "046943d265635c3d9c99195562e703564a26300981a7db5b87d4cd3fd180ae0d",
+    "losses.py": "a8659be4353f0b19740ed1463772f1ee15442ce950f27208aa2cc5950457b460",
+    "monotonic_align/__init__.py": "bcd65a2cd9a27974b095ba187f160966c76f8ae99eb967fc365f0f12947718bc",
+    "monotonic_align/core.py": "c8c4ad29ba99479164a51a36191ebc2372d4686d8e84b45a0d8e0d7b89b0f2e5",
+    "text/korean.py": "54c05e845c676f55fb8e93ed775be3581c3dc267b425c4209a5599fb1b7b8890",
+    "text/symbols.py": "4c1f3839f7e209b5da45daeb269f955b302d0d4c0df6dbf9be88d534b25ceea2",
+    "text/ko_dictionary.py": "e51d544e074de5314df9f409c948e39648891c2d6097da17f2f542ec1de0fe3e"
+  }
+}

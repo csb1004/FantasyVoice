@@ -1,0 +1,10 @@
+{
+  "validation_fraction": 0.05,
+  "seed": 42,
+  "allow_pending_transcripts": true,
+  "label_policy": "complete_only",
+  "pitch_baseline": "median",
+  "grouping": "character_text_and_audio_hash",
+  "no_pitch_policy": "hold_out",
+  "max_speed_phonemes_per_second": 30.0
+}
