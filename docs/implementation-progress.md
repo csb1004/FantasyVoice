@@ -241,3 +241,20 @@
   Notebook/script parity and normalized original-08 content checked; CPU logic verification only.
 - User's actual completed 08 weights/report were not supplied in this turn. Neither completion nor
   T4 joint-training success is claimed; 09 checks actual inputs when the user runs it.
+
+## User-provided 08 cache variant compatibility (2026-09-21)
+
+- Read the supplied 08_train_tts_resumable_cache_v2.ipynb as implementation reference.
+  Its local cache is checkpointed every 500 processed samples to Drive tar.gz parts.
+- Preserved the user's variant as a code-only notebook and added a compatible archive reader/writer
+  for 09, retaining cache directories, part names, and unchanged data/frontend key definitions.
+- Restore accepts only regular audio/text hash-named cache files, rejects traversal and links,
+  ignores partial uploads, and publishes each saved part by replacement after upload completes.
+- Existing local files without a Drive backup remain pending, and failed uploads do not advance
+  saved state. Ordinary interruption attempts to save complete cache entries.
+- Original 08 script/notebook, src and config remain unchanged. Previously launched 09 jobs still
+  need their original entry point to preserve their strict resume fingerprint.
+- Tests cover legacy-format restoration, incremental saves, upload retry, partials and unsafe members.
+  Real Drive archive contents and Colab restore time have not been inspected or measured here.
+- Full local suite: 103 passed, 6 upstream warnings; script/notebook parity, unchanged original
+  training sources and the supplied notebook's preserved cell source were verified.

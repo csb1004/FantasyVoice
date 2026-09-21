@@ -22,6 +22,8 @@ DATASET = BASE / 'dataset-prepared-v1.zip'
 PREDICTOR = BASE / 'predictor-v1/best-model.pt'
 PROJECT = Path('/content/fantasyvoice-tts')
 CACHE = Path('/content/fantasyvoice-tts-cache')
+CACHE_CHECKPOINTS = BASE / 'tts-cache-checkpoints'
+CACHE_CHECKPOINT_EVERY = 500
 
 # 09 always trains Predictor and TTS together in a separate output directory.
 STAGE = 'joint'
@@ -44,7 +46,7 @@ for path in (BUNDLE, DATASET, PREDICTOR, WARMUP_MODEL,
 if not VOICE_ROOT.is_dir():
     raise FileNotFoundError(VOICE_ROOT)
 with zipfile.ZipFile(BUNDLE) as archive:
-    if 'scripts/joint_inputs.py' not in archive.namelist():
+    if not {'scripts/joint_inputs.py', 'scripts/cache_checkpoints.py'}.issubset(archive.namelist()):
         raise RuntimeError('09가 포함된 최신 fantasyvoice-pilot.zip으로 교체하세요.')
     for item in archive.infolist():
         if not (PROJECT / item.filename).resolve().is_relative_to(PROJECT.resolve()):
@@ -63,6 +65,7 @@ for package in ('torch','numpy','transformers','numba','librosa'):
 sys.path.insert(0, str(PROJECT / 'src'))
 sys.path.insert(0, str(PROJECT / 'scripts'))
 sys.modules.pop('joint_inputs', None)
+sys.modules.pop('cache_checkpoints', None)
 for name in list(sys.modules):
     if name == 'fantasyvoice' or name.startswith('fantasyvoice.'):
         del sys.modules[name]
@@ -80,6 +83,7 @@ from fantasyvoice.training.tts import TTSObjective
 from fantasyvoice.training.tts_engine import fit_engine
 from fantasyvoice.inference.tts import synthesize
 from joint_inputs import validate_completed_warmup
+from cache_checkpoints import CacheCheckpoints
 
 if not torch.cuda.is_available():
     raise RuntimeError('09는 Predictor와 TTS의 실제 공동 학습입니다. GPU 런타임을 선택하세요.')
@@ -115,6 +119,7 @@ frontend_identity['implementation_sha256'] = sha256(PROJECT / 'src/fantasyvoice/
 identity = {'dataset_sha256':dataset_sha, 'dataset_metadata':metadata,
     'entrypoint_sha256':sha256(PROJECT / 'scripts/colab_joint_tts.py'),
     'handoff_check_sha256':sha256(PROJECT / 'scripts/joint_inputs.py'),
+    'cache_checkpoint_sha256':sha256(PROJECT / 'scripts/cache_checkpoints.py'),
     'predictor_sha256':sha256(PREDICTOR), 'pretrained_artifacts':artifacts,
     'warmup_sha256':sha256(WARMUP_MODEL),
     'versions':package_versions,
@@ -129,11 +134,35 @@ elif OUTPUT.exists() and any(OUTPUT.iterdir()):
     raise ValueError('출력 폴더에 체크포인트가 아닌 파일이 있습니다. 새 EXPERIMENT 이름을 지정하세요.')
 
 print(f"학습 {len(splits['train']):,} / 검증 {len(splits['validation']):,}. 로컬 음원·텍스트 캐시를 준비합니다.", flush=True)
-print('최초 준비는 Drive에서 각 음원을 읽습니다. 런타임 재시작으로 /content가 지워지면 캐시도 다시 준비합니다.', flush=True)
+if type(CACHE_CHECKPOINT_EVERY) is not int or CACHE_CHECKPOINT_EVERY < 1:
+    raise ValueError('CACHE_CHECKPOINT_EVERY must be a positive integer')
+cache_checkpoints = CacheCheckpoints(CACHE, CACHE_CHECKPOINTS)
+restored = cache_checkpoints.restore()
+print(f'08/09 Drive 캐시 복원: {restored:,}개 파일. 현재 해시에 맞는 캐시를 재사용합니다.', flush=True)
 frontend = KoreanFrontend(config, hps['symbols'], device)
 started = time.monotonic()
-data = prepare_cache(splits, VOICE_ROOT, CACHE, frontend, tokenizer, metadata, frontend_identity,
-    progress=lambda done,total: print(f'캐시 {done:,}/{total:,} | {(time.monotonic()-started)/60:.1f}분', flush=True))
+last_cache_checkpoint = 0
+
+def cache_progress(done, total):
+    global last_cache_checkpoint
+    print(f'캐시 {done:,}/{total:,} | {(time.monotonic()-started)/60:.1f}분', flush=True)
+    if done - last_cache_checkpoint >= CACHE_CHECKPOINT_EVERY:
+        cache_checkpoints.save()
+        last_cache_checkpoint = done
+
+try:
+    data = prepare_cache(splits, VOICE_ROOT, CACHE, frontend, tokenizer, metadata, frontend_identity,
+                         progress=cache_progress)
+except BaseException:
+    # On an ordinary interruption preserve complete local cache entries. A hard
+    # runtime termination can only recover the previously published tar parts.
+    try:
+        cache_checkpoints.save()
+    except Exception as cache_error:
+        print(f'마지막 캐시 저장 실패; 기존 Drive 파트는 보존됩니다: {cache_error}', flush=True)
+    raise
+cache_checkpoints.save()
+print('캐시 준비 및 최종 증분 저장 완료.', flush=True)
 frontend.model.to('cpu')
 del frontend
 gc.collect(); torch.cuda.empty_cache()
