@@ -258,3 +258,19 @@
   Real Drive archive contents and Colab restore time have not been inspected or measured here.
 - Full local suite: 103 passed, 6 upstream warnings; script/notebook parity, unchanged original
   training sources and the supplied notebook's preserved cell source were verified.
+
+## 10 post-joint inference (2026-09-22)
+
+- Added a two-cell Colab notebook: load once, then generate repeated text/character/seed requests.
+- Validate joint completion using the checkpoint's saved batch/accumulation settings, selected best
+  update/mel, matching run identity and original 07 model SHA; verify training source file hashes.
+- Reconstruct architecture from the known model settings and original 07 metadata, then strictly
+  replace both TTS and Predictor with their paired joint weights. No optimizer or source audio needed.
+- Save unique per-request FLOAT WAV, browser PCM preview, model/style metadata and download ZIP.
+  Preserve raw amplitude; record playback-only attenuation and handle silence without normalization errors.
+- Added eleven tests for completion/mismatch rejection, joint weight replacement, source identity,
+  raw audio preservation, silent output, unique output paths and archive contents.
+- Full local suite: 114 passed, 6 upstream warnings. Both notebook cells match their scripts;
+  existing training modules/config/08/09 entrypoints are unchanged, preserving resume identities.
+- No user 09 model/report was supplied. Actual trained-model quality and Colab execution remain
+  unverified; the completed-run check executes on the user's files at runtime.
