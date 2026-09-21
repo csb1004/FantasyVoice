@@ -228,3 +228,16 @@
 - Initial settings remain experimental. Full Colab/T4 execution, peak GPU memory, full corpus training,
   learned-v1 integration and listening quality are not verified locally.
 - Local suite: 83 passed, 6 upstream deprecation warnings. Syntax/notebook parity and bundle checked.
+
+## 09 dedicated joint-training entry point (2026-09-21)
+
+- User requested the code after assumed completion of 08. Added colab_joint_tts.py and
+  09_joint_tts.ipynb using the existing approved joint engine, with explicit Predictor LR controls.
+- Before model loading/cache preparation, verify completed warmup counters, matching run identity,
+  selected best update/mel, dataset/statistics/character map, Predictor SHA and frontend/model config.
+- No changes to 08 script/notebook, src modules or training config: existing warmup resume identities
+  are preserved. A former joint run launched through 08 still requires that original entry point.
+- Added twelve handoff tests. Full suite: 95 passed, 6 upstream deprecation warnings.
+  Notebook/script parity and normalized original-08 content checked; CPU logic verification only.
+- User's actual completed 08 weights/report were not supplied in this turn. Neither completion nor
+  T4 joint-training success is claimed; 09 checks actual inputs when the user runs it.
