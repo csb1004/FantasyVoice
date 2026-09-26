@@ -292,3 +292,17 @@
 - 사용자 09 가중치와 GPU 전체 학습은 로컬에서 검증하지 않았음.
   T4 메모리 적합성과 청취 품질 개선을 보장하지 않음.
 - 실행 안내: [emotion-feedback.md](emotion-feedback.md).
+
+
+## 2026-09-26: T4/L4 실제 배치 확대
+
+- 11·12 모두 GPU 자동 감지: T4 실제 batch 4, L4 실제 batch 8, 누적 1.
+- 음원별 정규화 및 프레임 padding mask로 감정 분석 batch를 처리.
+  12의 텍스트 prior 생성도 실제 batch로 실행하고 각 생성 길이로 자른 후 분석.
+- forward/backward OOM은 optimizer commit 전에 해당 업데이트 전체를 작은 실제
+  배치로 재계산. 이때만 기존 유효 batch를 유지하는 누적이 발생함.
+- 원래 08/09 src와 감정 분석기 adapter를 보존해 기존 가중치 호환성을 유지.
+  기존 v1 학습 상태를 덮어쓰지 않도록 새 기본 실험은 v2-batch.
+- 실제 사전학습 emotion2vec의 길이가 다른 두 음원 batch에서 CPU forward/backward 확인.
+  T4/L4에서 batch 4/8의 메모리 및 처리량은 아직 측정하지 않았음.
+- 최종 회귀 테스트 132개 통과. 배치별 마스킹, 길이별 생성, OOM 재계산 및 재개 검증 포함.

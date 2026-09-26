@@ -27,11 +27,11 @@ CACHE_CHECKPOINT_EVERY = 500
 
 # Experimental defaults, not tuned values. Change EXPERIMENT when changing any setting.
 STAGE = 'joint'
-EXPERIMENT = 'v1'
+EXPERIMENT = 'v2-batch'
 SOURCE_MODEL = BASE / 'tts-joint-v1/best-model.pt'
-EMOTION_MODEL = BASE / 'emotion-analyzer-v1/best-model.pt'
-BATCH_SIZE = 1
-ACCUMULATION_STEPS = 4
+EMOTION_MODEL = BASE / 'emotion-analyzer-v2-batch/best-model.pt'
+BATCH_SIZE = 'auto'  # T4: 4, L4: 8; or set a positive integer.
+ACCUMULATION_STEPS = 1
 EPOCHS = 1
 LEARNING_RATE = 1e-5
 DOWNLOAD_REPORT = True
@@ -40,8 +40,6 @@ EMOTION_WEIGHT = 1.0
 MAX_SECONDS = 15.0
 EMOTION_VALIDATION_SAMPLES = 16
 
-if BATCH_SIZE != 1:
-    raise ValueError('12 requires BATCH_SIZE=1; increase ACCUMULATION_STEPS instead.')
 for path in (BUNDLE, DATASET, PREDICTOR, SOURCE_MODEL,
              SOURCE_MODEL.parent / 'training-report.json', SOURCE_MODEL.parent / 'run.json',
              EMOTION_MODEL, EMOTION_MODEL.parent/'training-report.json', EMOTION_MODEL.parent/'run.json'):
@@ -50,7 +48,7 @@ for path in (BUNDLE, DATASET, PREDICTOR, SOURCE_MODEL,
 if not VOICE_ROOT.is_dir():
     raise FileNotFoundError(VOICE_ROOT)
 with zipfile.ZipFile(BUNDLE) as archive:
-    if not {'scripts/emotion_feedback.py', 'scripts/emotion_training.py', 'scripts/inference_tools.py', 'scripts/cache_checkpoints.py'}.issubset(archive.namelist()):
+    if not {'scripts/emotion_feedback.py', 'scripts/gpu_batches.py', 'scripts/feedback_engine.py', 'scripts/emotion_training.py', 'scripts/inference_tools.py', 'scripts/cache_checkpoints.py'}.issubset(archive.namelist()):
         raise RuntimeError('11/12가 포함된 최신 fantasyvoice-pilot.zip으로 교체하세요.')
     for item in archive.infolist():
         if not (PROJECT / item.filename).resolve().is_relative_to(PROJECT.resolve()):
@@ -83,6 +81,8 @@ sys.path.insert(0, str(PROJECT / 'src'))
 sys.path.insert(0, str(PROJECT / 'scripts'))
 sys.modules.pop('emotion_feedback', None)
 sys.modules.pop('emotion_training', None)
+sys.modules.pop('gpu_batches', None)
+sys.modules.pop('feedback_engine', None)
 sys.modules.pop('inference_tools', None)
 sys.modules.pop('cache_checkpoints', None)
 for name in list(sys.modules):
@@ -98,10 +98,11 @@ from fantasyvoice.dataset.storage import sha256, write_json
 from fantasyvoice.dataset.tts_data import KoreanFrontend, prepare_cache
 from fantasyvoice.training.predictor import read_prepared
 from fantasyvoice.training.tts_runtime import load_tts, load_predictor
-from fantasyvoice.training.tts_engine import fit_engine
+from feedback_engine import fit_engine
 from fantasyvoice.inference.tts import synthesize
 from inference_tools import validate_completed_joint, verify_inference_sources, load_joint_weights
-from emotion_feedback import FeedbackObjective, load_analyzer
+from emotion_feedback import load_analyzer
+from gpu_batches import batch_preset, BatchedFeedbackObjective
 from emotion_training import validate_emotion_checkpoint, select_duration
 from cache_checkpoints import CacheCheckpoints
 
@@ -109,6 +110,14 @@ if not torch.cuda.is_available():
     raise RuntimeError('12는 감정 피드백을 사용하는 TTS 학습입니다. GPU 런타임을 선택하세요.')
 device = 'cuda'
 print('GPU:', torch.cuda.get_device_name(0), flush=True)
+if BATCH_SIZE == 'auto':
+    props = torch.cuda.get_device_properties(0)
+    BATCH_SIZE, _ = batch_preset(props.name, props.total_memory / 2**30, 12)
+if type(BATCH_SIZE) is not int or BATCH_SIZE < 1:
+    raise ValueError("BATCH_SIZE must be 'auto' or a positive integer")
+print(f'실제 배치 {BATCH_SIZE}, 누적 {ACCUMULATION_STEPS}, 유효 배치 {BATCH_SIZE*ACCUMULATION_STEPS}', flush=True)
+config['batch_size'] = BATCH_SIZE
+
 random.seed(config['seed']); torch.manual_seed(config['seed']); torch.cuda.manual_seed_all(config['seed'])
 torch.backends.cudnn.benchmark = False
 splits, metadata = read_prepared(DATASET)
@@ -158,6 +167,8 @@ identity = {'dataset_sha256':dataset_sha, 'dataset_metadata':metadata,
     'handoff_check_sha256':sha256(PROJECT / 'scripts/inference_tools.py'),
     'feedback_code_sha256':sha256(PROJECT / 'scripts/emotion_feedback.py'),
     'analyzer_handoff_sha256':sha256(PROJECT / 'scripts/emotion_training.py'),
+    'batch_helper_sha256':sha256(PROJECT/'scripts/gpu_batches.py'),
+    'engine_sha256':sha256(PROJECT/'scripts/feedback_engine.py'),
     'trained_analyzer_sha256':sha256(EMOTION_MODEL),
     'feedback_versions':{k:importlib.metadata.version(k) for k in ('funasr','torchaudio','omegaconf')},
     'duration_selection':selection,
@@ -223,7 +234,7 @@ emotion_saved = torch.load(EMOTION_MODEL, map_location='cpu', weights_only=True,
 analyzer.load_state_dict(emotion_saved['model'], strict=True)
 analyzer.eval().requires_grad_(False)
 del emotion_saved
-objective = FeedbackObjective(modules, data['train'], config, device, tokenizer.pad_token_id, emotion=analyzer)
+objective = BatchedFeedbackObjective(modules, data['train'], config, device, tokenizer.pad_token_id, emotion=analyzer)
 # Preflight is a check, not an optimizer update. Engine restores RNG on resume.
 probe = objective.feedback_preflight(data['train'][0])
 print('Emotion-only gradient preflight:', probe, flush=True)
@@ -239,7 +250,7 @@ started = time.monotonic()
 def progress(info):
     if info['updates'] % 10 == 0 or info['updates'] == 1:
         print(f"update {info['updates']}/{info['total_updates']} | epoch {info['epoch']} | "
-              f"G {info['losses']['g']:.3f} D {info['losses']['d']:.3f} | "
+              f"batch {info['microbatch_size']} | G {info['losses']['g']:.3f} D {info['losses']['d']:.3f} | "
               f"{(time.monotonic()-started)/60:.1f}분", flush=True)
     if not (OUTPUT / 'run.json').exists():
         write_json(OUTPUT / 'run.json', {'config':config, 'identity':identity, 'preflight':probe})

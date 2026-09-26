@@ -20,11 +20,12 @@ DATASET = BASE / 'dataset-prepared-v1.zip'
 PROJECT = Path('/content/fantasyvoice-emotion')
 CACHE = Path('/content/fantasyvoice-tts-cache')
 CACHE_CHECKPOINTS = BASE / 'tts-cache-checkpoints'
-EXPERIMENT = 'v1'
+EXPERIMENT = 'v2-batch'
 OUTPUT = BASE / f'emotion-analyzer-{EXPERIMENT}'
 # Provisional starting values, not quality-validated hyperparameters.
 EPOCHS = 1
-ACCUMULATION_STEPS = 4  # One complete utterance per microbatch.
+BATCH_SIZE = 'auto'  # T4: 4, L4: 8; or set a positive integer.
+ACCUMULATION_STEPS = 1
 LEARNING_RATE = 1e-6
 MAX_SECONDS = 15.0
 DOWNLOAD_REPORT = True
@@ -35,7 +36,7 @@ for path in (BUNDLE, DATASET):
 if not VOICE_ROOT.is_dir():
     raise FileNotFoundError(VOICE_ROOT)
 with zipfile.ZipFile(BUNDLE) as archive:
-    if 'scripts/emotion_training.py' not in archive.namelist():
+    if not {'scripts/emotion_training.py','scripts/gpu_batches.py'}.issubset(archive.namelist()):
         raise ValueError('11/12가 포함된 최신 코드 ZIP으로 교체하세요.')
     for item in archive.infolist():
         if not (PROJECT / item.filename).resolve().is_relative_to(PROJECT.resolve()):
@@ -54,7 +55,7 @@ for package in ('torch','torchaudio','numpy','transformers','numba','librosa'):
 sys.path[:0] = [str(PROJECT/'src'), str(PROJECT/'scripts')]
 for name in list(sys.modules):
     if (name == 'fantasyvoice' or name.startswith('fantasyvoice.')
-            or name in ('emotion_feedback','emotion_training','cache_checkpoints')):
+            or name in ('emotion_feedback','emotion_training','gpu_batches','cache_checkpoints')):
         del sys.modules[name]
 importlib.invalidate_caches()
 
@@ -66,12 +67,20 @@ from fantasyvoice.style.features import EMOTIONS
 from cache_checkpoints import CacheCheckpoints
 from emotion_feedback import load_analyzer
 from emotion_training import EmotionData, select_duration, fit_emotion
+from gpu_batches import batch_preset
 
 if not torch.cuda.is_available():
     raise RuntimeError('감정 분석기 전체 학습에는 GPU 런타임을 선택하세요.')
 device = 'cuda'
 print('GPU:', torch.cuda.get_device_name(0), flush=True)
-config = dict(epochs=EPOCHS, accumulation_steps=ACCUMULATION_STEPS,
+if BATCH_SIZE == 'auto':
+    props = torch.cuda.get_device_properties(0)
+    BATCH_SIZE, _ = batch_preset(props.name, props.total_memory / 2**30, 11)
+if type(BATCH_SIZE) is not int or BATCH_SIZE < 1:
+    raise ValueError("BATCH_SIZE must be 'auto' or a positive integer")
+print(f'실제 배치 {BATCH_SIZE}, 누적 {ACCUMULATION_STEPS}, 유효 배치 {BATCH_SIZE*ACCUMULATION_STEPS}', flush=True)
+
+config = dict(epochs=EPOCHS, batch_size=BATCH_SIZE, accumulation_steps=ACCUMULATION_STEPS,
     learning_rate=LEARNING_RATE, max_seconds=MAX_SECONDS, gradient_clip=1.,
     seed=42, save_every=100, eval_every=100, validation_samples=16, lr_decay=.999875,
     precision='fp32', training='all_used_parameters_real_audio_pseudo_labels')
@@ -85,6 +94,7 @@ identity = {'dataset_sha256':sha256(DATASET), 'dataset_metadata':metadata,
     'entrypoint_sha256':sha256(PROJECT/'scripts/colab_train_emotion.py'),
     'adapter_sha256':sha256(PROJECT/'scripts/emotion_feedback.py'),
     'training_sha256':sha256(PROJECT/'scripts/emotion_training.py'),
+    'batch_helper_sha256':sha256(PROJECT/'scripts/gpu_batches.py'),
     'cache_sha256':sha256(PROJECT/'scripts/cache_checkpoints.py'),
     'source_sha256':{p.relative_to(PROJECT).as_posix():sha256(p)
         for p in sorted((PROJECT/'src/fantasyvoice').rglob('*.py'))},

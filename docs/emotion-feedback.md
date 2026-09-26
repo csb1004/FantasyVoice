@@ -26,9 +26,9 @@
 - `MyDrive/FantasyVoice/fantasyvoice-pilot.zip`: 최신 실행 코드
 - 12에서 추가: `predictor-v1/best-model.pt`, `tts-joint-v1/`의
   `best-model.pt`, `run.json`, `training-report.json`
-- 12에서 추가: 11의 `emotion-analyzer-v1/`에 있는 같은 세 파일
+- 12에서 추가: 11의 `emotion-analyzer-v2-batch/`에 있는 같은 세 파일
 
-11 출력은 `emotion-analyzer-v1`, 12 출력은 `tts-emotion-feedback-v1`입니다.
+11 출력은 `emotion-analyzer-v2-batch`, 12 출력은 `tts-emotion-feedback-v2-batch`입니다.
 각 단계의 `latest.pt`는 재개용 모델·optimizer·진행 위치·RNG를 함께 저장합니다.
 같은 설정으로 같은 셀을 재실행하면 마지막 저장 경계부터 이어갑니다.
 설정/코드/데이터를 변경할 때는 `EXPERIMENT`를 바꾸세요. 원본 모델 폴더와 겹치지 마세요.
@@ -44,14 +44,26 @@
 
 | 설정 | 11 분석기 | 12 TTS |
 |---|---:|---:|
-| 한 번에 처리하는 발화 | 1 | 1 |
-| 누적 횟수 | 4 | 4 |
+| 실제 배치(T4) | 4 | 4 |
+| 실제 배치(L4) | 8 | 8 |
+| 누적 횟수 | 1 | 1 |
 | epoch | 1 | 1 |
 | 학습률 | 1e-6 | 1e-5 |
 | 감정 KL 가중치 | 지도학습 목적 | 1.0 |
 
-12의 `BATCH_SIZE`는 1이어야 합니다. 패딩 없이 전체 발화를 평가하기 위한 조건이며
-유효 배치는 `ACCUMULATION_STEPS`로 조절합니다. 08/09의 batch 8을 복사하지 마세요.
+`BATCH_SIZE='auto'`는 GPU 이름과 실제 메모리를 확인해 T4는 4, L4는 8로 시작합니다.
+숫자를 직접 지정할 수도 있습니다. 두 단계 모두 여러 음원을 동시에 처리하는 실제 배치입니다.
+각 음원을 따로 정규화한 다음 패딩하고, 분석기의 프레임 마스크로 패딩을 평균에서 제외합니다.
+12는 생성 길이별로 패딩을 제거한 음성을 분석기에 전달합니다.
+forward/backward에서 CUDA OOM이 발생하면 optimizer 업데이트 전에 해당 묶음 전체를
+작은 실제 배치로 다시 계산합니다(8→4→2→1). 이때만 최초 유효 배치를 유지하기 위한
+누적이 발생하며 실제 사용 배치를 로그와 체크포인트에 기록합니다.
+optimizer 상태 할당 중 OOM이나 한 음원도 들어가지 않는 경우에는 자동 복구하지 않습니다.
+현재 값은 실제 T4/L4에서 검증된 최대 배치가 아닌 시작값입니다.
+새 기본 EXPERIMENT는 `v2-batch`이며 기존 v1 폴더를 덮어쓰지 않습니다.
+이미 완료한 v1 분석기는 12의 `EMOTION_MODEL` 경로를 지정해서 사용할 수 있습니다.
+GPU를 바꿔 같은 실행을 재개할 때는 원래 시작 배치 값을 숫자로 지정하세요.
+
 `MAX_SECONDS=15`를 넘는 원본은 이번 실험에서만 제외하고 개수를 보고합니다.
 캐릭터가 통째로 제외되면 중단합니다. 로컬 준비 데이터에서는 학습 15개, 검증 1개가
 이 조건으로 제외됩니다. 원본/준비 ZIP은 변경하지 않습니다.
@@ -59,7 +71,7 @@
 
 기존 emotion2vec-plus-large의 사용되는 파라미터 전체를 11에서 학습합니다.
 12도 전체 생성 음성을 통한 역전파가 필요해 09보다 메모리 부담이 큽니다.
-T4 적합성은 검증되지 않았습니다. OOM 시 누적 횟수를 줄이는 것만으로 단일 발화의
+T4/L4 최대 배치는 GPU에서 검증되지 않았습니다. 누적 횟수를 줄이는 것만으로 단일 발화의
 메모리는 줄지 않습니다. 더 큰 메모리의 GPU 또는 길이 조건을 검토해야 합니다.
 감정 경로는 FP32이며, 기존 TTS GAN 학습의 AMP 설정은 유지됩니다.
 
@@ -97,10 +109,12 @@ T4 적합성은 검증되지 않았습니다. OOM 시 누적 횟수를 줄이는
 12 완료 후 기존 10번 노트북에서 다음 경로를 지정하면 됩니다.
 
 ```python
-JOINT_DIR = BASE / 'tts-emotion-feedback-v1'
+JOINT_DIR = BASE / 'tts-emotion-feedback-v2-batch'
 ```
 
 10은 기존대로 텍스트에서 Predictor가 스타일을 예측합니다. 12의 라벨 조건 학습과
 구분해 평가하세요. 검증 샘플 폴더에서는 라벨 조건 생성 결과도 들을 수 있습니다.
 두 단계 모두 보고서 ZIP을 자동 다운로드합니다. 보고서에는 가중치를 넣지 않으며,
 학습 상태/모델 가중치는 Drive에 남습니다.
+
+GPU 용량 참고: [NVIDIA T4](https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/tesla-t4/t4-tensor-core-datasheet.pdf), [NVIDIA L4](https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/l4/PB-11316-001_v01.pdf).

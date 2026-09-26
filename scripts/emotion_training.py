@@ -8,6 +8,7 @@ from fantasyvoice.dataset.storage import write_json
 from fantasyvoice.style.features import EMOTIONS
 from fantasyvoice.training.predictor import atomic_checkpoint, rng_state, restore_rng
 from emotion_feedback import emotion_kl
+from gpu_batches import emotion_batch_logits
 
 
 class EmotionData:
@@ -48,7 +49,7 @@ def validate_emotion_checkpoint(best, report, identity):
     if saved['identity'] != identity:
         raise ValueError('Emotion checkpoint identity mismatch')
     config = saved['config']
-    total = math.ceil(saved['size'] / config['accumulation_steps']) * config['epochs']
+    total = math.ceil(saved['size'] / (config.get('batch_size',1) * config['accumulation_steps'])) * config['epochs']
     if (report.get('complete') is not True or report.get('pending_eval') is not None
             or report['epoch'] != config['epochs'] or report['updates'] != total
             or report['total_updates'] != total):
@@ -71,6 +72,10 @@ def fit_emotion(model, train, validation, config, output, identity, device,
     for key in ('learning_rate','gradient_clip','lr_decay'):
         if not math.isfinite(config[key]) or config[key] <= 0:
             raise ValueError(f'Invalid {key}')
+    batch_size = config.get('batch_size',1)
+    if type(batch_size) is not int or batch_size < 1:
+        raise ValueError('Invalid batch_size')
+    window_size = batch_size * config['accumulation_steps']
     if not len(train) or not len(validation):
         raise ValueError('Empty train/validation split')
     output = Path(output)
@@ -83,8 +88,8 @@ def fit_emotion(model, train, validation, config, output, identity, device,
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=config['lr_decay'])
     fingerprint = {'config':config, 'identity':identity, 'size':len(train)}
     state = dict(epoch=0, cursor=0, updates=0, pending_eval=True,
-                 best_kl=None, best_update=None, history=[])
-    total = math.ceil(len(train) / config['accumulation_steps']) * config['epochs']
+                 best_kl=None, best_update=None, history=[], microbatch_size=batch_size)
+    total = math.ceil(len(train) / window_size) * config['epochs']
 
     def save():
         atomic_checkpoint(path, {**state, 'fingerprint':fingerprint, 'model':model.state_dict(),
@@ -131,21 +136,45 @@ def fit_emotion(model, train, validation, config, output, identity, device,
         save()
 
     evaluate()
+    def backward_window(indices):
+        loss_sum = 0.
+        for start in range(0,len(indices),state['microbatch_size']):
+            chunk = indices[start:start+state['microbatch_size']]
+            items = [train[i] for i in chunk]
+            logits = emotion_batch_logits(model,[wave for wave,_ in items],device)
+            targets = torch.cat([target for _,target in items]).to(device)
+            loss = emotion_kl(logits,targets)
+            if not torch.isfinite(loss):
+                raise ValueError('Nonfinite analyzer loss; no optimizer update')
+            (loss * len(chunk) / len(indices)).backward()
+            loss_sum += float(loss.detach()) * len(chunk)
+        return loss_sum
+
     while state['epoch'] < config['epochs']:
         order = torch.randperm(len(train), generator=torch.Generator().manual_seed(
             config['seed'] + state['epoch'])).tolist()
         while state['cursor'] < len(train):
-            indices = order[state['cursor']:state['cursor']+config['accumulation_steps']]
-            optimizer.zero_grad(set_to_none=True)
+            indices = order[state['cursor']:state['cursor']+window_size]
             model.train()
-            loss_sum = 0.
-            for i in indices:
-                wave, target = train[i]
-                loss = emotion_kl(model(wave.to(device)), target.to(device))
-                if not torch.isfinite(loss):
-                    raise ValueError('Nonfinite analyzer loss; no optimizer update')
-                (loss / len(indices)).backward()
-                loss_sum += float(loss.detach())
+            before = rng_state()
+            while True:
+                optimizer.zero_grad(set_to_none=True)
+                restore_rng(before)
+                oom = False
+                try:
+                    loss_sum = backward_window(indices)
+                except torch.cuda.OutOfMemoryError:
+                    oom = True
+                if not oom:
+                    break
+                optimizer.zero_grad(set_to_none=True)
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                if state['microbatch_size'] == 1:
+                    raise RuntimeError('One utterance exceeds GPU memory; resume on a larger GPU or use a new shorter-duration experiment')
+                state['microbatch_size'] = max(1,state['microbatch_size']//2)
+                print(f"CUDA OOM: retrying complete update with microbatch {state['microbatch_size']}; effective batch stays {window_size}",flush=True)
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config['gradient_clip'])
             if not torch.isfinite(norm):
                 raise ValueError('Nonfinite analyzer gradient; no optimizer update')
@@ -165,7 +194,8 @@ def fit_emotion(model, train, validation, config, output, identity, device,
             evaluate()
             if progress:
                 progress({'updates':state['updates'], 'total_updates':total,
-                          'epoch':state['epoch'], 'train_kl':loss_sum/len(indices)})
+                          'epoch':state['epoch'], 'train_kl':loss_sum/len(indices),
+                          'microbatch_size':state['microbatch_size'], 'effective_batch':window_size})
             if max_updates is not None and state['updates'] >= max_updates:
                 return {**state, 'total_updates':total, 'complete':state['epoch'] == config['epochs']}
             if epoch_end:
