@@ -274,3 +274,21 @@
   existing training modules/config/08/09 entrypoints are unchanged, preserving resume identities.
 - No user 09 model/report was supplied. Actual trained-model quality and Colab execution remain
   unverified; the completed-run check executes on the user's files at runtime.
+
+
+## 2026-09-26: 감정 분석기 선행 학습과 고정 분석기 TTS 피드백
+
+- 사용자 확정 순서: 11 원본 음성/감정 의사 라벨 지도학습 → 분석기 고정 →
+  12 기존 대사/감정·운율 라벨/캐릭터 조건 TTS 학습. 동시 분석기 업데이트는 사용하지 않음.
+- 기존 source/08/09 및 캐시 해시를 변경하지 않고 별도 scripts와 노트북으로 추가.
+- 11은 전체 검증 KL로 분석기를 선택하며 학습 전 baseline도 후보로 기록.
+  12는 기존 TTS loss + 생성 음성 감정 KL, Predictor/감정 분석기 고정.
+- 두 단계 재개, 검증 중단 복구, 완료/데이터/코드 일치 검사와 보고서 ZIP 제공.
+- 회귀 테스트 125개 통과. 한국어 프런트엔드와 실제 사전학습 MeloTTS,
+  emotion2vec-plus-large를 연결한 CPU smoke 검증 완료.
+- 원본 한 발화로 실제 분석기 AdamW update 확인(KL 0.00008831).
+  고정 분석기를 통과한 감정 loss에서 실제 TTS 캐릭터/디코더 gradient norm
+  6.671 / 30.516, 생성 길이 2.833초. 이는 작동 확인이며 음질 개선 수치가 아님.
+- 사용자 09 가중치와 GPU 전체 학습은 로컬에서 검증하지 않았음.
+  T4 메모리 적합성과 청취 품질 개선을 보장하지 않음.
+- 실행 안내: [emotion-feedback.md](emotion-feedback.md).
